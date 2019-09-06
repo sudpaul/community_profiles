@@ -1,0 +1,161 @@
+<html>
+  <head>
+  <link rel="stylesheet" href="http://cdn.leafletjs.com/leaflet/v1.3.0/leaflet.css" />
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.1.0/css/all.css" integrity="sha384-lKuwvrZot6UHsBSfcMvOkWwlCMgc0TaWr+30HWe3a4ltaBwTZhyTEggF5tJv8tbt" crossorigin="anonymous">
+  <script src="http://cdn.leafletjs.com/leaflet/v1.3.0/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.0.0/jquery.min.js"></script>    
+  <style>
+    .red { color: #ef427f;}
+    .white { color: #FFFFFF; }
+    .ico {
+      font-size: 20px;
+      margin-top: -20px;
+    }
+  </style>
+  </head>
+  <body>
+    <!-- This is the element where the store list with times will be displayed. -->
+    <div id="location-list" class="list-group-item" style="height: 100%; width: 35%; float: left;">
+      <h3>Shop Locations</h3>
+    </div>
+    <!-- Element for the Leaflet map. -->
+    <div id="map" style="height: 100%; width: 65%; float: right;"></div>
+    <script>
+    
+      // Origin point for the search. This should be the locations of the user obtained via a search or browser's location property.
+      var searchOrigin = {"id": "W1K 1QZ", "coords": {"lat": 51.503961363431245, "lng": -0.149147539459617}};       
+    
+      // This is the list of stores with their postcodes as ids and coordinates.
+      var stores = [
+        {"id": "NW1 4GP", "coords": {"lat": 51.530784523612894, "lng": -0.13543005013564888}},
+        {"id": "EC1V 9JN", "coords": {"lat": 51.52504619682997, "lng": -0.09506954769269844}},
+        {"id": "W14 4BU", "coords": {"lat": 51.49673423291608, "lng": -0.2125130748908848}},
+        {"id": "EC1M 6PF", "coords": {"lat": 51.52003610633216, "lng": -0.10275961676618843}},
+        {"id": "WC2B 4LA", "coords": {"lat": 51.51291573042524, "lng": -0.11569479033224865}},
+        {"id": "SW6 7PD", "coords": {"lat": 51.48311525970562, "lng": -0.2163581981092842}},
+        {"id": "WC1A 9AL", "coords": {"lat": 51.524565266487, "lng": -0.11204246095565637}},
+        {"id": "N7 6PA", "coords": {"lat": 51.55580566221214, "lng": -0.11598557877780112}},
+        {"id": "SE1 0FD", "coords": {"lat": 51.50593820418589, "lng": -0.09791278286553638}}
+      ];
+    
+      // The arrival time in an ISO format.
+      var departureTime = "2019-09-06T03:00:00+0100";
+      // Travel time in seconds. We want 1 hour travel time so it is 60 minutes x 60 seconds.
+      var travelTime = 60*60;
+      
+      // These headers are needed to authenticate the request
+      var authenticationHeaders = {
+        "X-Application-Id": "Your app id",
+        "X-Api-Key": "app key"
+      };
+    
+      // The request for Time Filter. Reference: http://docs.traveltimeplatform.com/reference/time-filter/
+      function sendTimeFilterRequest() {
+        var allLocations = [searchOrigin].concat(stores)
+        var departureLocationIds = stores.map(location => location.id)
+        var timeFilterRequest = {
+          locations: allLocations,
+          arrival_searches: [],
+          departure_searches: [
+            {
+              "id": "departure-search",
+              "arrival_location_ids": arrivalLocationIds,
+              "departure_location_id": searchOrigin.id,
+              "transportation": { "type": "public_transport" },
+              "travel_time": travelTime,
+              "departure_time": departureTime,
+              "properties": ["travel_time"]
+            }
+          ]
+        }
+      
+        $.ajax({
+          // The URL for the Time Filter endpoint.
+          url: "http://api.traveltimeapp.com/v4/time-filter",
+          type: "post",
+          headers: authenticationHeaders,
+          data: JSON.stringify(timeFilterRequest),
+          contentType: "application/json; charset=UTF-8",
+          success: insertItemsWithTimes
+        });
+      }
+      
+      function insertItemsWithTimes(timeFilterResponse) {
+        var locations = timeFilterResponse.results[0].locations;
+        locations.sort((a, b) => a.properties[0].travel_time - b.properties[0].travel_time);
+        locations.forEach(location => {
+          var template = `<span class="list-group-item">${location.id}<span class="badge">${Math.round(location.properties[0].travel_time / 60)} minutes</span></span>`;
+          $("#location-list").append(template);
+        })
+      }
+    
+      // The request for Time Map. Reference: http://docs.traveltimeplatform.com/reference/time-map/   
+      function sendTimeMapRequest(map) {
+        var request = {
+          arrival_searches: [],
+          departure_searches: [{
+            id: "time-map",
+            "coords": searchOrigin.coords,
+            transportation: { type: "public_transport" },
+            departure_time: departureTime,
+            travel_time: travelTime
+          }]
+        };
+      
+        $.ajax({
+          url: "http://api.traveltimeapp.com/v4/time-map",
+          type: "post",
+          headers: authenticationHeaders,
+          data: JSON.stringify(request),
+          contentType: "application/json; charset=UTF-8",
+          success: drawTimeMap(map)
+        });
+      };
+
+      // A helper function that converts [{lat: <lat>, lng: <lng>}, ...] to a [[<lat>, <lng>], ...] format.   
+      function ringCoordsHashToArray(ring) {
+        return ring.map((latLng) => { return [latLng.lat, latLng.lng]; } );
+      };
+  
+      // Draws the resulting shape from the response on the map.   
+      function drawTimeMap(map) {
+        return (response) => {
+          var shapesCoords = response.results[0].shapes.map((polygon) => {
+            var shell = ringCoordsHashToArray(polygon.shell);
+            var holes = polygon.holes.map(ringCoordsHashToArray);
+            return [shell].concat(holes);    
+          })
+          var polygon = L.polygon(shapesCoords, {color: 'red'});
+          polygon.addTo(map);
+          map.fitBounds(polygon.getBounds());
+        };
+      };
+
+      //Map set up
+      function setupMap(markerCoords) {
+        var osmUrl="http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";    
+        var osmTileLayer = L.tileLayer(osmUrl, {minZoom: 8, maxZoom: 15});
+        var map = L.map("map").addLayer(osmTileLayer);
+        var icon = L.divIcon({className: 'fas fa-map-marker red ico'})
+        L.marker(markerCoords, {icon: icon}).addTo(map);
+        return map;
+      };    
+    
+      function drawMarkers(markers, map) {
+        var icon = L.divIcon({className: 'fas fa-map-marker white ico'})
+        markers.map((marker) => {
+          L.marker(marker, {icon: icon}).addTo(map);
+        })
+      };
+    
+      var originCoords = [searchOrigin.coords.lat, searchOrigin.coords.lng];
+      var markerCoords = stores.map(store => [store.coords.lat, store.coords.lng])
+      var map = setupMap(originCoords);
+      drawMarkers(markerCoords, map);
+      sendTimeMapRequest(map);
+      sendTimeFilterRequest(map);
+  
+    </script>
+  </body>
+</html>
